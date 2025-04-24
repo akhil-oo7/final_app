@@ -7,7 +7,7 @@ class VideoProcessor:
         self.frame_interval = frame_interval
         self.target_size = target_size
     
-    def extract_frames(self, video_path, max_frames=None, start_frame=0):
+    def extract_frames(self, video_path, max_frames=None):
         frames = []
         cap = cv2.VideoCapture(video_path)
         
@@ -15,27 +15,29 @@ class VideoProcessor:
             raise ValueError("Could not open video file")
         
         try:
-            # Set starting position
-            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-            
-            frames_extracted = 0
+            frame_count = 0
             while True:
                 ret, frame = cap.read()
-                if not ret or (max_frames and frames_extracted >= max_frames):
+                if not ret:
                     break
                 
-                if frames_extracted % self.frame_interval == 0:
+                # Extract frame at specified interval
+                if frame_count % self.frame_interval == 0:
                     try:
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         frame_resized = cv2.resize(frame_rgb, self.target_size)
                         frames.append(frame_resized)
+                        
+                        # Early exit if we reached max_frames
+                        if max_frames and len(frames) >= max_frames:
+                            break
                     except Exception as e:
-                        print(f"Error processing frame: {str(e)}")
+                        print(f"Error processing frame {frame_count}: {str(e)}")
                         continue
+                    
+                frame_count += 1
                 
-                frames_extracted += 1
-                
+            return frames
+        
         finally:
             cap.release()
-            
-        return frames

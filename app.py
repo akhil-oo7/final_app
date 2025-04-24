@@ -53,69 +53,53 @@ def analyze_video():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        # Process in chunks to save memory
-        processor = get_processor()
-        moderator = get_moderator()
+        # Initialize processor with smaller frame interval
+        processor = VideoProcessor(frame_interval=15)  # Reduced from 60 to 15
+        moderator = ContentModerator(train_mode=False)
         
-        # Get frame count first
-        cap = cv2.VideoCapture(filepath)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        
-        # Process in chunks of 100 frames
-        chunk_size = 100
-        results = []
-        processed_frames = 0
-        
-        while processed_frames < total_frames:
-            frames = processor.extract_frames(
-                filepath, 
-                max_frames=chunk_size,
-                start_frame=processed_frames
-            )
-            
+        # Extract ALL frames first (for accurate frame numbering)
+        try:
+            frames = processor.extract_frames(filepath)
             if not frames:
-                break
+                return jsonify({
+                    'status': 'error',
+                    'message': 'No frames could be extracted'
+                }), 400
                 
-            chunk_results = moderator.analyze_frames(frames)
-            results.extend(chunk_results)
+            # Analyze all frames at once (for simplicity)
+            results = moderator.analyze_frames(frames)
             
-            processed_frames += len(frames)
-            del frames
-            gc.collect()
-        
-        # Calculate results
-        unsafe_frames = [r for r in results if r['flagged']]
-        total_analyzed = len(results)
-        
-        if total_analyzed == 0:
-            return jsonify({'error': 'No frames were processed'}), 400
-            
-        unsafe_percentage = (len(unsafe_frames) / total_analyzed) * 100
-        
-        response = {
-            'status': 'UNSAFE' if unsafe_frames else 'SAFE',
-            'total_frames': total_analyzed,
-            'unsafe_frames': len(unsafe_frames),
-            'unsafe_percentage': unsafe_percentage,
-            'confidence': 1.0 if not unsafe_frames else max(r['confidence'] for r in unsafe_frames),
-            'details': []
-        }
-        
-        if unsafe_frames:
+            # Calculate results with proper frame indices
+            unsafe_frames = []
             for frame_idx, result in enumerate(results):
                 if result['flagged']:
-                    response['details'].append({
-                        'frame': frame_idx,
+                    unsafe_frames.append({
+                        'frame': frame_idx * processor.frame_interval,  # Actual frame number
                         'reason': result['reason'],
                         'confidence': result['confidence']
                     })
-        
-        os.remove(filepath)
-        return jsonify(response)
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+            
+            # Prepare response
+            response = {
+                'status': 'UNSAFE' if unsafe_frames else 'SAFE',
+                'total_frames': len(frames),
+                'unsafe_frames': len(unsafe_frames),
+                'unsafe_percentage': (len(unsafe_frames)/len(frames))*100,
+                'confidence': 1.0 if not unsafe_frames else max(r['confidence'] for r in unsafe_frames),
+                'details': unsafe_frames  # Only include flagged frames
+            }
+            
+            return jsonify(response)
+            
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': f'Analysis failed: {str(e)}'
+            }), 500
+            
+    finally:
+        if os.path.exists(filepath):
+            os.remove(filepath)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))

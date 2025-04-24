@@ -339,35 +339,17 @@
             document.getElementById('progressBar').style.width = '0%';
             document.getElementById('progressPercent').textContent = '0%';
             
-            const statusElement = document.getElementById('status');
-            statusElement.textContent = "Processing video...";
-            statusElement.className = "status processing";
-            statusElement.style.display = 'block';
-            
-            // Hide previous results
+            // Clear previous results
             document.getElementById('resultSection').style.display = 'none';
+            document.getElementById('details').innerHTML = '';
             
-            // Create progress event listener
-            const progressHandler = function(e) {
-                if (e.lengthComputable) {
-                    const percentComplete = (e.loaded / e.total) * 100;
-                    document.getElementById('progressBar').style.width = `${percentComplete}%`;
-                    document.getElementById('progressPercent').textContent = `${Math.round(percentComplete)}%`;
-                    
-                    if (percentComplete >= 100) {
-                        document.getElementById('progressStatus').textContent = "Finalizing analysis...";
-                    }
-                }
-            };
-            
-            // Make the request
             fetch('/analyze', {
                 method: 'POST',
                 body: formData
             })
             .then(response => {
                 if (!response.ok) {
-                    throw new Error('Analysis failed');
+                    return response.json().then(err => { throw new Error(err.message || 'Analysis failed'); });
                 }
                 return response.json();
             })
@@ -376,18 +358,17 @@
                 document.getElementById('progressContainer').style.display = 'none';
                 analyzeBtn.disabled = false;
                 
-                // Show results
+                // Handle error response
+                if (data.status === 'error') {
+                    throw new Error(data.message);
+                }
+                
+                // Always show result section
                 const resultSection = document.getElementById('resultSection');
                 resultSection.style.display = 'block';
                 
-                // Handle error response
-                if (data.error) {
-                    statusElement.textContent = `Error: ${data.error}`;
-                    statusElement.className = "status error";
-                    return;
-                }
-                
                 // Update status
+                const statusElement = document.getElementById('status');
                 statusElement.textContent = `Video Status: ${data.status}`;
                 statusElement.className = `status ${data.status.toLowerCase()}`;
                 
@@ -402,16 +383,14 @@
                         `${data.unsafe_frames} unsafe frames (${data.unsafe_percentage.toFixed(1)}%)` : 
                         'No unsafe content detected.');
                 
-                // Update details
+                // Update details - only show flagged frames
                 const details = document.getElementById('details');
-                details.innerHTML = '';
-                
                 if (data.details && data.details.length > 0) {
                     data.details.forEach(detail => {
                         const frameDetail = document.createElement('div');
                         frameDetail.className = 'frame-detail';
                         frameDetail.innerHTML = `
-                            <strong>Frame ${detail.frame}:</strong><br>
+                            <strong>Frame #${detail.frame}:</strong><br>
                             Reason: ${detail.reason}<br>
                             Confidence: ${(detail.confidence * 100).toFixed(1)}%
                         `;
@@ -424,6 +403,7 @@
                 analyzeBtn.disabled = false;
                 document.getElementById('progressContainer').style.display = 'none';
                 
+                const statusElement = document.getElementById('status');
                 statusElement.textContent = `Error: ${error.message}`;
                 statusElement.className = "status error";
                 statusElement.style.display = 'block';
