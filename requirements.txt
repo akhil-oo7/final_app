@@ -13,3 +13,4 @@ accelerate
 flask-sse
 flask-limiter>=3.0.0
 six
+redis

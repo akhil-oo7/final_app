@@ -15,6 +15,7 @@ load_dotenv()
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'Uploads'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit
+app.config['SSE_REDIS_URL'] = os.environ.get('SSE_REDIS_URL')  # Redis URL for flask_sse
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
