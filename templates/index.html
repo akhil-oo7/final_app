@@ -286,7 +286,6 @@
         const MAX_FILE_SIZE_MB = 50;
         const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
         
-        // Update file info when selected
         document.getElementById('videoInput').addEventListener('change', function(e) {
             const file = e.target.files[0];
             const fileInfo = document.getElementById('fileInfo');
@@ -299,7 +298,6 @@
                 `;
                 fileInfo.style.display = 'block';
                 
-                // Disable analyze button if file too large
                 document.getElementById('analyzeBtn').disabled = file.size > MAX_FILE_SIZE_BYTES;
                 
                 if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -311,7 +309,6 @@
                 fileInfo.style.display = 'none';
             }
             
-            // Hide previous results
             document.getElementById('resultSection').style.display = 'none';
         });
 
@@ -333,57 +330,58 @@
             const formData = new FormData();
             formData.append('video', file);
             
-            // Show processing UI
             analyzeBtn.disabled = true;
-            document.getElementById('progressContainer').style.display = 'block';
+            const progressContainer = document.getElementById('progressContainer');
+            progressContainer.style.display = 'block';
             document.getElementById('progressBar').style.width = '0%';
             document.getElementById('progressPercent').textContent = '0%';
             
-            // Clear previous results
             document.getElementById('resultSection').style.display = 'none';
             document.getElementById('details').innerHTML = '';
+            
+            const source = new EventSource('/stream');
+            source.addEventListener('progress', function(event) {
+                const data = JSON.parse(event.data);
+                const progress = data.progress;
+                document.getElementById('progressBar').style.width = `${progress}%`;
+                document.getElementById('progressPercent').textContent = `${Math.round(progress)}%`;
+            });
             
             fetch('/analyze', {
                 method: 'POST',
                 body: formData
             })
             .then(response => {
+                source.close();
                 if (!response.ok) {
                     return response.json().then(err => { throw new Error(err.message || 'Analysis failed'); });
                 }
                 return response.json();
             })
             .then(data => {
-                // Hide progress bar
-                document.getElementById('progressContainer').style.display = 'none';
+                progressContainer.style.display = 'none';
                 analyzeBtn.disabled = false;
                 
-                // Handle error response
                 if (data.status === 'error') {
                     throw new Error(data.message);
                 }
                 
-                // Always show result section
                 const resultSection = document.getElementById('resultSection');
                 resultSection.style.display = 'block';
                 
-                // Update status
                 const statusElement = document.getElementById('status');
                 statusElement.textContent = `Video Status: ${data.status}`;
                 statusElement.className = `status ${data.status.toLowerCase()}`;
                 
-                // Update confidence
                 document.getElementById('confidence').textContent = 
                     `Confidence: ${(data.confidence * 100).toFixed(1)}%`;
                 
-                // Update stats
                 document.getElementById('stats').textContent = 
                     `Analyzed ${data.total_frames} frames. ` +
                     (data.unsafe_frames > 0 ? 
                         `${data.unsafe_frames} unsafe frames (${data.unsafe_percentage.toFixed(1)}%)` : 
                         'No unsafe content detected.');
                 
-                // Update details - only show flagged frames
                 const details = document.getElementById('details');
                 if (data.details && data.details.length > 0) {
                     data.details.forEach(detail => {
@@ -399,14 +397,15 @@
                 }
             })
             .catch(error => {
+                source.close();
                 console.error('Error:', error);
                 analyzeBtn.disabled = false;
-                document.getElementById('progressContainer').style.display = 'none';
+                progressContainer.style.display = 'none';
                 
                 const statusElement = document.getElementById('status');
                 statusElement.textContent = `Error: ${error.message}`;
                 statusElement.className = "status error";
-                statusElement.style.display = 'block';
+                document.getElementById('resultSection').style.display = 'block';
             });
         }
     </script>
