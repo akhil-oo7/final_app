@@ -1,4 +1,7 @@
 from flask import Flask, render_template, request, jsonify
+from flask_sse import sse
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import os
 from werkzeug.utils import secure_filename
 from video_processor import VideoProcessor
@@ -10,96 +13,82 @@ load_dotenv()
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # Reduced to 50MB
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit
 
-# Ensure upload directory exists
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Initialize components lazily to save memory
-video_processor = None
-content_moderator = None
-
-def get_processor():
-    global video_processor
-    if video_processor is None:
-        video_processor = VideoProcessor(frame_interval=60)  # Increased interval
-    return video_processor
-
-def get_moderator():
-    global content_moderator
-    if content_moderator is None:
-        content_moderator = ContentModerator(train_mode=False)
-    return content_moderator
+app.register_blueprint(sse, url_prefix='/stream')
+limiter = Limiter(app, key_func=get_remote_address)
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
 @app.route('/analyze', methods=['POST'])
+@limiter.limit("5 per minute")
 def analyze_video():
     if 'video' not in request.files:
-        return jsonify({'error': 'No video file provided'}), 400
+        return jsonify({'status': 'error', 'message': 'No video file provided'}), 400
     
     file = request.files['video']
     if file.filename == '':
-        return jsonify({'error': 'No selected file'}), 400
+        return jsonify({'status': 'error', 'message': 'No selected file'}), 400
     
     allowed_extensions = {'mp4', 'avi', 'mov', 'mkv'}
     if '.' not in file.filename or file.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
-        return jsonify({'error': 'Invalid file format. Supported formats: mp4, avi, mov, mkv'}), 400
+        return jsonify({'status': 'error', 'message': 'Invalid file format. Supported formats: mp4, avi, mov, mkv'}), 400
+    
+    if file.content_length and file.content_length > app.config['MAX_CONTENT_LENGTH']:
+        return jsonify({'status': 'error', 'message': 'File size exceeds 50MB limit'}), 400
     
     try:
         filename = secure_filename(file.filename)
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
-        # Initialize processor with smaller frame interval
-        processor = VideoProcessor(frame_interval=15)  # Reduced from 60 to 15
+        processor = VideoProcessor(frame_interval=15)
         moderator = ContentModerator(train_mode=False)
         
-        # Extract ALL frames first (for accurate frame numbering)
-        try:
-            frames = processor.extract_frames(filepath)
-            if not frames:
-                return jsonify({
-                    'status': 'error',
-                    'message': 'No frames could be extracted'
-                }), 400
-                
-            # Analyze all frames at once (for simplicity)
-            results = moderator.analyze_frames(frames)
-            
-            # Calculate results with proper frame indices
-            unsafe_frames = []
-            for frame_idx, result in enumerate(results):
-                if result['flagged']:
-                    unsafe_frames.append({
-                        'frame': frame_idx * processor.frame_interval,  # Actual frame number
-                        'reason': result['reason'],
-                        'confidence': result['confidence']
-                    })
-            
-            # Prepare response
-            response = {
-                'status': 'UNSAFE' if unsafe_frames else 'SAFE',
-                'total_frames': len(frames),
-                'unsafe_frames': len(unsafe_frames),
-                'unsafe_percentage': (len(unsafe_frames)/len(frames))*100,
-                'confidence': 1.0 if not unsafe_frames else max(r['confidence'] for r in unsafe_frames),
-                'details': unsafe_frames  # Only include flagged frames
-            }
-            
-            return jsonify(response)
-            
-        except Exception as e:
+        frame_generator = processor.extract_frames_stream(filepath)
+        total_frames = int(cv2.VideoCapture(filepath).get(cv2.CAP_PROP_FRAME_COUNT) / 15)  # Approximate
+        processed_frames = 0
+        
+        results = []
+        for batch_results in moderator.analyze_frames_stream(frame_generator):
+            results.extend(batch_results)
+            processed_frames += len(batch_results)
+            if total_frames > 0:
+                progress = min((processed_frames / total_frames) * 100, 100)
+                sse.publish({"progress": progress}, type='progress')
+        
+        if not results:
             return jsonify({
                 'status': 'error',
-                'message': f'Analysis failed: {str(e)}'
-            }), 500
-            
+                'message': 'No frames could be extracted'
+            }), 400
+        
+        unsafe_frames = [r for r in results if r['flagged']]
+        response = {
+            'status': 'UNSAFE' if unsafe_frames else 'SAFE',
+            'total_frames': len(results),
+            'unsafe_frames': len(unsafe_frames),
+            'unsafe_percentage': (len(unsafe_frames) / len(results)) * 100 if results else 0,
+            'confidence': 1.0 if not unsafe_frames else max(r['confidence'] for r in unsafe_frames),
+            'details': unsafe_frames
+        }
+        
+        return jsonify(response)
+    
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': f'Analysis failed: {str(e)}'
+        }), 500
+    
     finally:
-        if os.path.exists(filepath):
+        if 'filepath' in locals() and os.path.exists(filepath):
             os.remove(filepath)
+        gc.collect()
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
