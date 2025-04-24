@@ -19,15 +19,13 @@ class ContentModerator:
                 if os.path.exists(model_path):
                     self.model = AutoModelForImageClassification.from_pretrained(
                         model_path,
-                        num_labels=2,
-                        low_cpu_mem_usage=True
+                        num_labels=2
                     )
                 else:
                     print("Warning: Fine-tuned model not found, using base model")
                     self.model = AutoModelForImageClassification.from_pretrained(
                         self.model_name,
-                        num_labels=2,
-                        low_cpu_mem_usage=True
+                        num_labels=2
                     )
                 self.model.to(self.device)
                 self.model.eval()

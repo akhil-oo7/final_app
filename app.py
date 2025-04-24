@@ -3,6 +3,7 @@ from flask_sse import sse
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import os
+import cv2
 from werkzeug.utils import secure_filename
 from video_processor import VideoProcessor
 from content_moderator import ContentModerator
@@ -12,13 +13,19 @@ import gc
 load_dotenv()
 
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['UPLOAD_FOLDER'] = 'Uploads'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB limit
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+# Initialize Flask-Limiter with updated API
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"]
+)
+
 app.register_blueprint(sse, url_prefix='/stream')
-limiter = Limiter(app, key_func=get_remote_address)
 
 @app.route('/')
 def index():
@@ -92,4 +99,4 @@ def analyze_video():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False)
