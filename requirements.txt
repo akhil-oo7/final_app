@@ -11,5 +11,5 @@ werkzeug==3.0.1
 gunicorn==20.1.0 
 accelerate
 flask-sse
-flask-limiter
+flask-limiter>=3.0.0
 six
